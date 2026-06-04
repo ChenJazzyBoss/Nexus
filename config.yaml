@@ -1,0 +1,27 @@
+# Nexus Configuration
+project_name: nexus
+default_provider: openai
+default_model: gpt-4o
+
+# Agent settings
+max_iterations: 90
+max_concurrent_agents: 5
+context_threshold_percent: 0.75
+
+# Provider configurations (override built-in profiles)
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+  anthropic:
+    base_url: https://api.anthropic.com
+
+# MCP servers (add your MCP servers here)
+mcp_servers: {}
+
+# Knowledge store
+knowledge_db_path: data/knowledge.db
+vector_db_path: data/lancedb
+
+# API server
+api_host: 0.0.0.0
+api_port: 8600
