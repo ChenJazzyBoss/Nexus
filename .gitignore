@@ -28,9 +28,8 @@ Thumbs.db
 # Logs
 *.log
 
-# superSpec (generated files, keep config)
-.superspec/specs/*/
-!superspec/specs/.gitkeep
+# superSpec (keep specs tracked)
+.superspec/scripts/
 
 # Data
 data/
