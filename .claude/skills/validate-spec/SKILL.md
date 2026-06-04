@@ -1,0 +1,114 @@
+---
+name: validate-spec
+description: 在修改 spec 文件后使用，确保 spec 质量符合标准
+---
+
+# 校验规格说明书（Validate Spec）
+
+## 概述
+
+对 spec 文件运行程序化校验，确保结构完整、内容合规。
+
+**核心原则：** 校验不是可选的，是每次修改 spec 后的必经步骤。
+
+## 何时使用
+
+**始终使用：**
+- 修改 spec 文件后
+- 生成新 spec 后
+- 合并 spec 变更后
+
+<SUBAGENT-STOP>
+如果你是作为子智能体被分派来执行特定任务的，跳过此技能。
+</SUBAGENT-STOP>
+
+## 校验命令
+
+```bash
+node .superspec/scripts/validate.js <spec-file-path>
+```
+
+例如：
+```bash
+node .superspec/scripts/validate.js .superspec/specs/batch-export/spec.md
+```
+
+## 校验决策流程
+
+```mermaid
+flowchart TD
+  Start["开始校验"] --> Parse["解析 Spec 文件"]
+  Parse --> SchemaCheck{"Schema 校验<br/>通过？"}
+  SchemaCheck -->|否| SchemaFail["❌ Schema 校验失败<br/>返回 ERROR"]
+  SchemaCheck -->|是| RuleCheck["规则引擎校验"]
+  RuleCheck --> HasError{"存在 ERROR？"}
+  HasError -->|是| ErrorResult["❌ 校验失败"]
+  HasError -->|否| HasWarning{"存在 WARNING？"}
+  HasWarning -->|是| StrictCheck{"strictMode？"}
+  StrictCheck -->|是| StrictFail["⚠️ strictMode 失败"]
+  StrictCheck -->|否| WarnResult["⚠️ 通过（有警告）"]
+  HasWarning -->|否| Pass["✅ 校验通过"]
+  SchemaFail --> End["结束"]
+  ErrorResult --> End
+  StrictFail --> End
+  WarnResult --> End
+  Pass --> End
+```
+
+## 输出格式
+
+校验工具输出 JSON 格式：
+
+```json
+{
+  "valid": true,
+  "issues": [],
+  "summary": { "errors": 0, "warnings": 0, "info": 0 }
+}
+```
+
+## 如何处理校验结果
+
+### valid: true
+校验通过。spec 质量合格。
+
+### valid: false
+校验失败。查看 issues 数组中的错误：
+
+| level | 含义 | 处理方式 |
+|-------|------|---------|
+| ERROR | 必须修正 | 根据 message 修正 spec，重新校验 |
+| WARNING | 建议修正 | 评估是否需要修正 |
+| INFO | 仅供参考 | 了解即可 |
+
+## 常见错误及修正方法
+
+| 错误信息 | 原因 | 修正方法 |
+|---------|------|---------|
+| "概述内容至少需要 50 个字符" | Purpose 太短 | 补充功能的目的和价值描述 |
+| "需求文本必须包含 SHALL 或 MUST" | 缺少强制性关键词 | 在需求描述中加入 SHALL 或 MUST |
+| "每条需求至少需要关联 2 个场景" | 场景数不足 | 补充异常/边界场景 |
+| "场景原始文本至少需要 10 个字符" | 场景描述太短 | 补充 Given/When/Then 的具体内容 |
+| "规格中至少需要包含 1 条需求" | 没有需求 | 添加至少一条 Requirement |
+
+<EXTREMELY-IMPORTANT>
+校验失败时，你必须修正 spec 并重新校验。不要跳过校验，不要忽略错误。
+</EXTREMELY-IMPORTANT>
+
+## 跳步红线
+
+| 跳步借口 | 现实 |
+|----------|------|
+| "校验太严格了，跳过吧" | 校验保证质量，不能跳 |
+| "错误是误报，忽略就行" | 先确认是否真误报，再决定 |
+| "WARNING 不重要" | WARNING 可能演变成 ERROR |
+| "改完代码再校验" | spec 改了就立刻校验 |
+| "这个 spec 之前通过了" | 之前通过不代表改完还通过 |
+
+## 完成检查清单
+
+- [ ] 校验命令已实际运行
+- [ ] 输出中 valid: true
+- [ ] errors 数量为 0
+- [ ] warnings 已评估是否需要修正
+- [ ] 如果校验失败，已修正并重新校验
