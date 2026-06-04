@@ -1,7 +1,7 @@
 version: "1.0.0"
-project: "my-project"
+project: "nexus"
 tool: "claude-code"
-language: "typescript"
+language: "python"
 strict: false
 spec:
   min_purpose_length: 50
