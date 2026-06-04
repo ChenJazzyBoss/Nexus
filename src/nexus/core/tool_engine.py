@@ -101,6 +101,7 @@ class ToolEntry:
     emoji: str = "⚡"
     max_result_size_chars: int | float | None = None
     dynamic_schema_overrides: Callable | None = None
+    source: str = ""  # 工具来源标记，如 "builtin"、"mcp:arxiv" 等
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,7 @@ class ToolRegistry:
         max_result_size_chars: int | float | None = None,
         dynamic_schema_overrides: Callable | None = None,
         override: bool = False,
+        source: str = "",
     ) -> None:
         """Register a tool. Called at module-import time by each tool file."""
         with self._lock:
@@ -191,6 +193,7 @@ class ToolRegistry:
                 emoji=emoji,
                 max_result_size_chars=max_result_size_chars,
                 dynamic_schema_overrides=dynamic_schema_overrides,
+                source=source or toolset,
             )
             if check_fn and toolset not in self._toolset_checks:
                 self._toolset_checks[toolset] = check_fn
@@ -208,6 +211,73 @@ class ToolRegistry:
             if not toolset_still_exists:
                 self._toolset_checks.pop(entry.toolset, None)
             self._generation += 1
+
+    def merge_external_tools(
+        self, source: str, tools: list[dict[str, Any]]
+    ) -> int:
+        """合并外部工具到注册表。
+
+        同名工具时，built-in 优先（不覆盖已有的非外部工具）。
+        每个工具记录来源标记，方便调试。
+
+        Args:
+            source: 工具来源标记（如 "mcp:arxiv"、"mcp:filesystem"）
+            tools: 工具列表，每项包含 name, description, parameters, handler
+                   handler 可以是 Callable 或 {"handler": Callable, "is_async": bool}
+
+        Returns:
+            成功合并的工具数量
+        """
+        merged = 0
+        with self._lock:
+            for tool_def in tools:
+                name = tool_def.get("name", "")
+                if not name:
+                    logger.warning("跳过无名工具 (source=%s)", source)
+                    continue
+
+                existing = self._tools.get(name)
+                # built-in 优先：如果已有工具且来源不是外部，则不覆盖
+                if existing and not existing.source.startswith("mcp:"):
+                    logger.info(
+                        "跳过外部工具 '%s'（来源 %s）：已存在内置工具 '%s'",
+                        name, source, existing.source,
+                    )
+                    continue
+
+                # 提取 handler 信息
+                handler_info = tool_def.get("handler")
+                if handler_info is None:
+                    logger.warning("工具 '%s' 缺少 handler，跳过", name)
+                    continue
+
+                is_async = tool_def.get("is_async", False)
+                if isinstance(handler_info, dict):
+                    handler = handler_info.get("handler")
+                    is_async = handler_info.get("is_async", is_async)
+                else:
+                    handler = handler_info
+
+                self._tools[name] = ToolEntry(
+                    name=name,
+                    toolset=source,
+                    schema={
+                        "description": tool_def.get("description", ""),
+                        "parameters": tool_def.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                    handler=handler,
+                    is_async=is_async,
+                    description=tool_def.get("description", ""),
+                    emoji="🔌",
+                    source=source,
+                )
+                merged += 1
+                logger.debug("合并外部工具: %s (来源: %s)", name, source)
+
+            self._generation += 1
+
+        logger.info("从 %s 合并了 %d 个外部工具", source, merged)
+        return merged
 
     def get_entry(self, name: str) -> ToolEntry | None:
         """Return a registered tool entry by name, or None."""
@@ -295,6 +365,13 @@ class ToolRegistry:
                     if env not in toolsets[ts]["requirements"]:
                         toolsets[ts]["requirements"].append(env)
         return toolsets
+
+    def get_tools_by_source(self, source_prefix: str) -> list[ToolEntry]:
+        """返回指定来源前缀的所有工具，方便调试。"""
+        return [
+            entry for entry in self._snapshot_entries()
+            if entry.source.startswith(source_prefix)
+        ]
 
 
 # Module-level singleton

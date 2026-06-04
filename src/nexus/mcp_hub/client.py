@@ -13,10 +13,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# 工具名规范化：只保留 [a-zA-Z0-9_-]，其余替换为 _
+_NAME_NORMALIZE_PATTERN = re.compile(r"[^a-zA-Z0-9_-]")
 
 # MCP SDK is optional
 try:
@@ -25,6 +29,11 @@ try:
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
+
+
+def _normalize_tool_name(name: str) -> str:
+    """规范化工具名：非 [a-zA-Z0-9_-] 字符替换为 _。"""
+    return _NAME_NORMALIZE_PATTERN.sub("_", name)
 
 
 @dataclass
@@ -47,8 +56,9 @@ class McpTool:
 
     @property
     def qualified_name(self) -> str:
-        """Name with server prefix for registration."""
-        return f"mcp_{self.server_name}__{self.name}"
+        """Name with server prefix for registration (normalized)."""
+        normalized = _normalize_tool_name(self.name)
+        return f"mcp_{self.server_name}__{normalized}"
 
 
 class McpHub:
@@ -175,15 +185,77 @@ class McpHub:
         return list(self._tools.values())
 
     def get_tools_for_registry(self) -> list[dict[str, Any]]:
-        """Return tools in a format suitable for ToolRegistry registration."""
+        """Return tools in a format suitable for ToolRegistry.merge_external_tools().
+
+        每个工具字典包含 name, description, parameters, handler, is_async 字段，
+        可直接传入 merge_external_tools()。
+        """
         tools = []
         for tool in self._tools.values():
+            hub_ref = self
+            qname = tool.qualified_name
+
+            async def _make_call(args: dict[str, Any], _qname=qname) -> str:
+                return await hub_ref.call_tool(_qname, args)
+
             tools.append({
                 "name": tool.qualified_name,
                 "description": tool.description,
                 "parameters": tool.input_schema,
+                "handler": _make_call,
+                "is_async": True,
             })
         return tools
+
+    def register_to_registry(self, registry: Any) -> int:
+        """将所有已发现的 MCP 工具桥接到 Nexus ToolRegistry。
+
+        为每个 MCP 工具创建一个同步 call() 闭包，调用时通过 MCP session 执行。
+        工具注册到 "mcp" toolset，is_async=True 以支持异步调度。
+
+        Args:
+            registry: ToolRegistry 实例
+
+        Returns:
+            成功注册的工具数量
+        """
+        registered = 0
+        for tool in self._tools.values():
+            # 创建闭包：捕获 qualified_name 和 hub 引用
+            hub_ref = self
+            qualified_name = tool.qualified_name
+
+            def _make_handler(qname: str) -> Callable:
+                """创建 MCP 工具调用闭包。"""
+
+                async def _handler(args: dict[str, Any], **kwargs: Any) -> str:
+                    return await hub_ref.call_tool(qname, args)
+
+                return _handler
+
+            schema = {
+                "description": tool.description or f"MCP tool: {tool.name}",
+                "parameters": tool.input_schema or {"type": "object", "properties": {}},
+            }
+
+            try:
+                registry.register(
+                    name=tool.qualified_name,
+                    toolset="mcp",
+                    schema=schema,
+                    handler=_make_handler(qualified_name),
+                    is_async=True,
+                    description=tool.description,
+                    emoji="🔌",
+                    source=f"mcp:{tool.server_name}",
+                )
+                registered += 1
+                logger.debug("桥接 MCP 工具到 registry: %s", tool.qualified_name)
+            except Exception as e:
+                logger.warning("注册 MCP 工具 %s 失败: %s", tool.qualified_name, e)
+
+        logger.info("已桥接 %d 个 MCP 工具到 ToolRegistry", registered)
+        return registered
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> str:
         """Call an MCP tool by its qualified name.

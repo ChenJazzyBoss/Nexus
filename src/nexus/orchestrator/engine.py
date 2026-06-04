@@ -17,8 +17,10 @@ from typing import Any
 
 from nexus.core.agent import AgentConfig, AgentRunner, TurnResult
 from nexus.core.config import NexusConfig
+from nexus.core.embedding import EmbeddingProvider
 from nexus.core.iteration_budget import IterationBudget
 from nexus.core.tool_engine import ToolRegistry, registry as global_registry
+from nexus.knowledge.search import HybridSearch
 from nexus.orchestrator.events import Event, EventBus, EventType
 
 logger = logging.getLogger(__name__)
@@ -126,10 +128,14 @@ class Orchestrator:
         nexus_config: NexusConfig,
         tool_registry: ToolRegistry | None = None,
         event_bus: EventBus | None = None,
+        hybrid_search: HybridSearch | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ):
         self.nexus_config = nexus_config
         self.tool_registry = tool_registry or global_registry
         self.event_bus = event_bus or EventBus()
+        self.hybrid_search = hybrid_search
+        self.embedding_provider = embedding_provider
 
         self.agent_pool = AgentPool(
             max_concurrent=nexus_config.max_concurrent_agents
@@ -316,11 +322,55 @@ class Orchestrator:
         agent_id = f"agent_{uuid.uuid4().hex[:8]}"
         sid = subtask_id or f"sub_{uuid.uuid4().hex[:8]}"
 
+        # 知识检索 — 在执行任务前，通过 hybrid_search 检索相关知识
+        # 检索结果注入 task 的 goal 中，作为参考信息辅助 agent 决策
+        enriched_goal = goal
+        if self.hybrid_search:
+            try:
+                # 生成 query embedding（如果 embedding_provider 可用）
+                query_embedding = None
+                if self.embedding_provider:
+                    try:
+                        query_embedding = await asyncio.to_thread(
+                            self.embedding_provider.embed_text, goal
+                        )
+                    except Exception as e:
+                        logger.debug("Query embedding 生成失败，仅使用关键词搜索: %s", e)
+
+                search_result = await self.hybrid_search.search(
+                    documents={},  # 空文档集，仅使用向量搜索
+                    query=goal,
+                    top_k=5,
+                    query_embedding=query_embedding,
+                )
+
+                if search_result.results:
+                    # 将检索到的知识片段拼接为参考信息
+                    ref_parts = []
+                    for i, r in enumerate(search_result.results[:5], 1):
+                        snippet = r.snippet or r.content or ""
+                        if snippet:
+                            ref_parts.append(f"[{i}] {r.title}: {snippet[:300]}")
+                    if ref_parts:
+                        refs = "\n".join(ref_parts)
+                        enriched_goal = (
+                            f"{goal}\n\n"
+                            f"--- 参考知识 (via {search_result.mode} search) ---\n"
+                            f"{refs}\n"
+                            f"--- 以上为参考信息，请结合这些知识完成任务 ---"
+                        )
+                        logger.info(
+                            "任务 %s: 注入 %d 条参考知识 (mode=%s)",
+                            sid, len(ref_parts), search_result.mode,
+                        )
+            except Exception as e:
+                logger.debug("知识检索失败，使用原始 goal: %s", e)
+
         # Emit subtask events
         self.event_bus.emit(Event(
             event_type=EventType.SUBTASK_CREATED,
             task_id=task_id,
-            data={"subtask_id": sid, "goal": goal, "agent_id": agent_id},
+            data={"subtask_id": sid, "goal": enriched_goal, "agent_id": agent_id},
         ))
 
         start_time = time.time()
@@ -361,9 +411,9 @@ class Orchestrator:
                 data={"subtask_id": sid, "agent_id": agent_id},
             ))
 
-            # Execute
+            # Execute — 使用 enriched_goal（含参考知识）
             result = await asyncio.wait_for(
-                agent.run_turn(goal),
+                agent.run_turn(enriched_goal),
                 timeout=DEFAULT_SUBTASK_TIMEOUT,
             )
 

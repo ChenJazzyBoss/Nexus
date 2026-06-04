@@ -188,3 +188,59 @@ def build_memory_context_block(raw: str) -> str:
 def sanitize_context(text: str) -> str:
     """Strip injected memory fence tags from user input."""
     return re.sub(r"<memory-context>.*?</memory-context>", "", text, flags=re.DOTALL)
+
+
+# ── Built-in Memory Provider ─────────────────────────────────
+
+
+class BuiltinMemory(MemoryProvider):
+    """Built-in memory provider backed by a local MEMORY.md file.
+
+    Reads ~/.nexus/memory/MEMORY.md on initialization and injects its
+    contents into the system prompt. No tools exposed.
+    """
+
+    MAX_CHARS = 10_000
+    TRUNCATE_TO = 8_000
+
+    def __init__(self, memory_dir: str | None = None):
+        from pathlib import Path
+        self._dir = Path(memory_dir) if memory_dir else Path.home() / ".nexus" / "memory"
+        self._file = self._dir / "MEMORY.md"
+        self._content: str = ""
+        self._session_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "builtin"
+
+    def is_available(self) -> bool:
+        return self._file.exists()
+
+    def initialize(self, session_id: str, **kwargs) -> None:
+        self._session_id = session_id
+        self._dir.mkdir(parents=True, exist_ok=True)
+        if not self._file.exists():
+            self._file.write_text("", encoding="utf-8")
+            logger.info("Created empty memory file: %s", self._file)
+        self._load()
+
+    def _load(self) -> None:
+        """Load memory content from disk."""
+        try:
+            self._content = self._file.read_text(encoding="utf-8").strip()
+        except Exception:
+            logger.exception("Failed to read memory file: %s", self._file)
+            self._content = ""
+
+    def system_prompt_block(self) -> str:
+        if not self._content:
+            return ""
+        content = self._content
+        if len(content) > self.MAX_CHARS:
+            content = content[: self.TRUNCATE_TO] + "\n[memory truncated]"
+            logger.warning("Memory content truncated from %d to %d chars", len(self._content), self.TRUNCATE_TO)
+        return content
+
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        return []

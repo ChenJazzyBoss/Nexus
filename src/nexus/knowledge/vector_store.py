@@ -11,7 +11,11 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.chunker import chunk_markdown
+    from nexus.core.embedding import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -176,3 +180,50 @@ class VectorStore:
             self._dim = None
         except Exception:
             pass
+
+    def ingest_document(
+        self,
+        page_id: str,
+        text: str,
+        embedding_provider: "EmbeddingProvider",
+        max_chunk_size: int = 1000,
+        overlap: int = 100,
+    ) -> int:
+        """将文档分块、生成 embedding 并存入向量库。
+
+        使用 Markdown 递归分块器将文本切分，再通过 EmbeddingProvider
+        批量生成向量，最后 upsert 到 LanceDB。
+
+        Args:
+            page_id: 文档唯一标识。
+            text: 文档的 Markdown 文本。
+            embedding_provider: embedding 提供者实例。
+            max_chunk_size: 每个 chunk 的最大字符数。
+            overlap: 硬切时的重叠字符数。
+
+        Returns:
+            成功写入的 chunk 数量。
+        """
+        from nexus.core.chunker import chunk_markdown
+
+        # 分块
+        raw_chunks = chunk_markdown(text, max_chunk_size=max_chunk_size, overlap=overlap)
+        if not raw_chunks:
+            return 0
+
+        # 批量生成 embedding
+        texts = [c["text"] for c in raw_chunks]
+        embeddings = embedding_provider.embed_batch(texts)
+
+        # 构建 ChunkInput 列表
+        chunk_inputs = []
+        for i, (raw, emb) in enumerate(zip(raw_chunks, embeddings)):
+            chunk_inputs.append(ChunkInput(
+                page_id=page_id,
+                chunk_index=i,
+                chunk_text=raw["text"],
+                heading_path=raw["heading_path"],
+                embedding=emb,
+            ))
+
+        return self.upsert_chunks(chunk_inputs)

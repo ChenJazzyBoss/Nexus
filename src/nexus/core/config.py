@@ -197,6 +197,10 @@ class NexusConfig:
     # Provider overrides
     providers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # Provider 降级链 —— 当主 provider 失败时依次尝试
+    # 每项格式: {"provider": "openai", "model": "gpt-4o-mini", "base_url": "...", "api_key": "..."}
+    fallback_providers: list[dict[str, Any]] = field(default_factory=list)
+
     # MCP servers
     mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -241,6 +245,7 @@ def load_config(path: str | Path = "config.yaml") -> NexusConfig:
         max_concurrent_agents=data.get("max_concurrent_agents", 5),
         context_threshold_percent=data.get("context_threshold_percent", 0.75),
         providers=data.get("providers", {}),
+        fallback_providers=data.get("fallback_providers", []),
         mcp_servers=data.get("mcp_servers", {}),
         knowledge_db_path=data.get("knowledge_db_path", "data/knowledge.db"),
         vector_db_path=data.get("vector_db_path", "data/lancedb"),
