@@ -1,27 +1,29 @@
-# Nexus Configuration
+# Nexus Multi-Agent Platform Configuration
+# Edit this file to customize agent behavior.
+
 project_name: nexus
 default_provider: openai
-default_model: gpt-4o
+default_model: mimo-v2.5-pro
 
-# Agent settings
-max_iterations: 90
-max_concurrent_agents: 5
-context_threshold_percent: 0.75
+# Agent defaults
+max_iterations: 30
+max_concurrent_agents: 3
 
-# Provider configurations (override built-in profiles)
+# LLM providers
 providers:
   openai:
-    base_url: https://api.openai.com/v1
-  anthropic:
-    base_url: https://api.anthropic.com
+    base_url: https://token-plan-cn.xiaomimimo.com/v1
+    api_key: tp-cm7o8wbehuvdpx6cshelf703negzh7qhmvudrw0mmelsr3ze
 
-# MCP servers (add your MCP servers here)
-mcp_servers: {}
+# Research tools (future)
+# arxiv:
+#   max_results: 10
+#
+# web_search:
+#   engine: brave
+#   api_key: ${BRAVE_API_KEY}
 
-# Knowledge store
-knowledge_db_path: data/knowledge.db
-vector_db_path: data/lancedb
-
-# API server
-api_host: 0.0.0.0
-api_port: 8600
+# Visualization
+visualizer:
+  enabled: true
+  port: 8080

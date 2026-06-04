@@ -218,6 +218,7 @@ class Orchestrator:
                 data={
                     "status": task_result.status.value,
                     "duration": task_result.duration_seconds,
+                    "result": task_result.result[:500] if task_result.result else None,
                 },
             ))
 
@@ -248,15 +249,17 @@ class Orchestrator:
                     provider=self.nexus_config.default_provider,
                     system_prompt=(
                         "You are a task decomposition engine. "
-                        "Given a user task, break it into independent subtasks. "
+                        "Given a user task, break it into at most 3 independent subtasks. "
                         "Each subtask should be completable by a single agent.\n\n"
                         "Respond with a JSON array of subtasks:\n"
                         '[{"goal": "...", "tools": ["tool1", "tool2"], "role": "..."}]\n\n'
-                        "If the task is simple and doesn\'t need decomposition, "
-                        "return a single subtask with the original goal.\n\n"
+                        "Rules:\n"
+                        "- Maximum 3 subtasks. Fewer is better.\n"
+                        "- If the task is simple, return a SINGLE subtask with the original goal.\n"
+                        "- Each goal must be concrete and actionable.\n\n"
                         "Available tools: " + ", ".join(tool_names or [])
                     ),
-                    max_iterations=5,
+                    max_iterations=3,
                     tool_names=set(),  # No tools for decomposition
                 ),
                 nexus_config=self.nexus_config,
@@ -343,7 +346,7 @@ class Orchestrator:
                         "You are a focused worker agent. "
                         "Complete the given task thoroughly and return the result."
                     ),
-                    max_iterations=self.nexus_config.max_iterations,
+                    max_iterations=max(self.nexus_config.max_iterations, 50),
                     tool_names=tool_names,
                 ),
                 nexus_config=self.nexus_config,

@@ -40,6 +40,7 @@ class ProviderProfile:
 
     # ── Auth & endpoints ─────────────────────────────────────
     env_vars: tuple[str, ...] = ()
+    api_key: str = ""
     base_url: str = ""
     models_url: str = ""
     auth_type: str = "api_key"  # api_key | oauth | aws_sdk
@@ -66,7 +67,9 @@ class ProviderProfile:
         return ""
 
     def get_api_key(self) -> str | None:
-        """Resolve API key from environment variables."""
+        """Resolve API key: explicit field first, then environment variables."""
+        if self.api_key:
+            return self.api_key
         for var in self.env_vars:
             key = os.environ.get(var)
             if key:
